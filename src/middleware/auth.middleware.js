@@ -11,7 +11,13 @@ export const authenticate = async (req, res, next) => {
     throw UnauthorizedException({ Message: "A valid bearer token is required" });
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET, {
+      issuer: "saraha-api",
+      audience: "saraha-client",
+    });
+    if (payload.type !== "access") {
+      throw UnauthorizedException({ Message: "An access token is required" });
+    }
     const user = await findById({ model: UserModel, id: payload.sub });
     if (!user) throw UnauthorizedException({ Message: "User no longer exists" });
     req.user = user;

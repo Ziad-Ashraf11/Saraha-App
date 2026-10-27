@@ -23,9 +23,16 @@ const userSchema = new Schema(
     },
     password: {
       type: String,
-      required: true,
+      required: function () {
+        return this.provider === ProviderEnum.SYSTEM;
+      },
       select: false,
     },
+    googleId: { type: String, unique: true, sparse: true },
+    emailVerificationCodeHash: { type: String, select: false },
+    emailVerificationExpiresAt: { type: Date, select: false },
+    emailVerificationResendAt: { type: Date, select: false },
+    refreshTokenHash: { type: String, select: false },
     DOB: Date,
     age: Number,
     phone: String,
@@ -54,6 +61,10 @@ const userSchema = new Schema(
       virtuals: true,
       transform(_doc, ret) {
         delete ret.password;
+        delete ret.emailVerificationCodeHash;
+        delete ret.emailVerificationExpiresAt;
+        delete ret.emailVerificationResendAt;
+        delete ret.refreshTokenHash;
         return ret;
       },
     },
