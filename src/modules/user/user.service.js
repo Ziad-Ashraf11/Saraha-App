@@ -21,3 +21,6 @@ export const updateProfile = async (userId, updates) => {
 	if (!user) throw NotFoundException({ Message: "User not found" });
 	return user;
 };
+
+export const getUserForImageCleanup = async (userId) =>
+	findById({ model: UserModel, id: userId, select: "+avatarStorageName +coverStorageName" });

@@ -20,6 +20,9 @@ export const authenticate = async (req, res, next) => {
     }
     const user = await findById({ model: UserModel, id: payload.sub });
     if (!user) throw UnauthorizedException({ Message: "User no longer exists" });
+    if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
+      throw UnauthorizedException({ Message: "Token has been revoked" });
+    }
     req.user = user;
     next();
   } catch (error) {

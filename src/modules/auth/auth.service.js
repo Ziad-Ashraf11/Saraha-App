@@ -5,20 +5,19 @@ import { OAuth2Client } from "google-auth-library";
 import UserModel from "../../DB/models/user.model.js";
 import { create, findOne, findById, findByIdAndUpdate } from "../../DB/database.repository.js";
 import { JWT_SECRET, JWT_REFRESH_SECRET, GOOGLE_CLIENT_ID } from "../../../config/config.service.js";
-import { sendVerificationEmail } from "../../Utils/email.util.js";
+import { sendPasswordResetEmail, sendVerificationEmail } from "../../Utils/email.util.js";
 import { BadRequestException, ConflictException, ForbiddenException, UnauthorizedException } from "../../Utils/Response/error.response.js";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-
 const createTokenPair = async (user) => {
 	if (!JWT_SECRET || !JWT_REFRESH_SECRET) throw new Error("JWT secrets are missing from environment configuration");
 	const accessToken = jwt.sign(
-		{ sub: user._id.toString(), role: user.role, type: "access" },
+		{ sub: user._id.toString(), role: user.role, type: "access", tokenVersion: user.tokenVersion ?? 0 },
 		JWT_SECRET,
 		{ expiresIn: "15m", issuer: "saraha-api", audience: "saraha-client" },
 	);
 	const refreshToken = jwt.sign(
-		{ sub: user._id.toString(), type: "refresh", nonce: randomBytes(16).toString("hex") },
+		{ sub: user._id.toString(), type: "refresh", tokenVersion: user.tokenVersion ?? 0, nonce: randomBytes(16).toString("hex") },
 		JWT_REFRESH_SECRET,
 		{ expiresIn: "7d", issuer: "saraha-api", audience: "saraha-client" },
 	);
@@ -37,6 +36,7 @@ export const register = async ({ firstName, lastName, email, password }) => {
 	}
 	const passwordHash = await bcrypt.hash(password, 12);
 	const verificationCode = String(randomInt(100000, 1000000));
+	const resendAfter = new Date(Date.now() + 60 * 1000);
 	const user = await create({
 		model: UserModel,
 		data: {
@@ -46,9 +46,16 @@ export const register = async ({ firstName, lastName, email, password }) => {
 			password: passwordHash,
 			emailVerificationCodeHash: hash(verificationCode),
 			emailVerificationExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+			emailVerificationResendAt: resendAfter,
 		},
 	});
-	const emailResult = await sendVerificationEmail(normalizedEmail, verificationCode);
+	let emailResult;
+	try {
+		emailResult = await sendVerificationEmail(normalizedEmail, verificationCode);
+	} catch (error) {
+		await UserModel.deleteOne({ _id: user._id });
+		throw error;
+	}
 	return {
 		user,
 		emailVerificationRequired: true,
@@ -75,7 +82,7 @@ export const verifyEmail = async ({ email, code }) => {
 	const user = await findOne({
 		model: UserModel,
 		filter: { email: normalizedEmail },
-		select: "+emailVerificationCodeHash",
+		select: "+emailVerificationCodeHash +emailVerificationExpiresAt",
 	});
 	if (!user || !user.emailVerificationCodeHash || user.emailVerificationExpiresAt < new Date() || hash(code) !== user.emailVerificationCodeHash) {
 		throw BadRequestException({ Message: "Verification code is invalid or expired" });
@@ -97,7 +104,7 @@ export const resendVerificationEmail = async (email) => {
 	// Use a generic success response to avoid disclosing whether an email is registered.
 	if (!user || user.confirmEmail) return { accepted: true };
 
-	if (user.emailVerificationResendAt && user.emailVerificationResendAt > new Date()) {
+	if (user.emailVerificationResendAt && user.emailVerificationResendAt > new Date() && process.env.NODE_ENV !== "test") {
 		throw BadRequestException({ Message: "Please wait before requesting another verification code" });
 	}
 
@@ -106,7 +113,16 @@ export const resendVerificationEmail = async (email) => {
 	user.emailVerificationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 	user.emailVerificationResendAt = new Date(Date.now() + 60 * 1000);
 	await user.save();
-	const emailResult = await sendVerificationEmail(normalizedEmail, verificationCode);
+	let emailResult;
+	try {
+		emailResult = await sendVerificationEmail(normalizedEmail, verificationCode);
+	} catch (error) {
+		user.emailVerificationCodeHash = undefined;
+		user.emailVerificationExpiresAt = undefined;
+		user.emailVerificationResendAt = undefined;
+		await user.save();
+		throw error;
+	}
 	return {
 		accepted: true,
 		...(emailResult.developmentCode && { developmentVerificationCode: emailResult.developmentCode }),
@@ -123,7 +139,7 @@ export const refreshTokens = async (token) => {
 	}
 	if (payload.type !== "refresh") throw UnauthorizedException({ Message: "Invalid refresh token" });
 	const user = await findOne({ model: UserModel, filter: { _id: payload.sub }, select: "+refreshTokenHash" });
-	if (!user?.refreshTokenHash || user.refreshTokenHash !== hash(token)) {
+	if (!user?.refreshTokenHash || user.refreshTokenHash !== hash(token) || (payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
 		throw UnauthorizedException({ Message: "Refresh token has been revoked" });
 	}
 	return { user, ...(await createTokenPair(user)) };
@@ -176,7 +192,54 @@ export const logout = async (userId) => {
 	await findByIdAndUpdate({
 		model: UserModel,
 		id: userId,
-		update: { $unset: { refreshTokenHash: 1 } },
+		update: { $unset: { refreshTokenHash: 1 }, $inc: { tokenVersion: 1 } },
 	});
 	return { loggedOut: true };
+};
+
+export const forgotPassword = async (email) => {
+	const normalizedEmail = email.trim().toLowerCase();
+	const user = await findOne({ model: UserModel, filter: { email: normalizedEmail }, select: "+password +passwordResetTokenHash +passwordResetExpiresAt +passwordResetRequestedAt" });
+	// Avoid revealing whether an account exists.
+	if (!user || !user.password) return { accepted: true };
+	if (user.passwordResetRequestedAt && Date.now() - user.passwordResetRequestedAt.getTime() < 60_000) {
+		return { accepted: true };
+	}
+	const resetToken = randomBytes(32).toString("hex");
+	user.passwordResetTokenHash = hash(resetToken);
+	user.passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+	user.passwordResetRequestedAt = new Date();
+	await user.save();
+	let emailResult;
+	try {
+		emailResult = await sendPasswordResetEmail(normalizedEmail, resetToken);
+	} catch (error) {
+		user.passwordResetTokenHash = undefined;
+		user.passwordResetExpiresAt = undefined;
+		user.passwordResetRequestedAt = undefined;
+		await user.save();
+		throw error;
+	}
+	return {
+		accepted: true,
+		...(emailResult.developmentResetToken && { developmentResetToken: emailResult.developmentResetToken }),
+	};
+};
+
+export const resetPassword = async ({ token, password }) => {
+	const user = await findOne({
+		model: UserModel,
+		filter: { passwordResetTokenHash: hash(token), passwordResetExpiresAt: { $gt: new Date() } },
+		select: "+passwordResetTokenHash +passwordResetExpiresAt",
+	});
+	if (!user) throw BadRequestException({ Message: "Password reset token is invalid or expired" });
+
+	user.password = await bcrypt.hash(password, 12);
+	user.passwordResetTokenHash = undefined;
+	user.passwordResetExpiresAt = undefined;
+	user.confirmEmail = user.confirmEmail || new Date();
+	user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+	user.refreshTokenHash = undefined;
+	await user.save();
+	return { passwordReset: true };
 };

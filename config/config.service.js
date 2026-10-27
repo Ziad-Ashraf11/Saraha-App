@@ -19,3 +19,4 @@ export const SMTP_SECURE = process.env.SMTP_SECURE === "true";
 export const SMTP_USER = process.env.SMTP_USER;
 export const SMTP_PASS = process.env.SMTP_PASS;
 export const MAIL_FROM = process.env.MAIL_FROM || SMTP_USER;
+export const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${PORT}`;

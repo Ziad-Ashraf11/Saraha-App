@@ -50,3 +50,21 @@ export const validateGoogleLogin = (req, res, next) => {
 	}
 	next();
 };
+
+export const validateForgotPassword = (req, res, next) => {
+	if (typeof req.body?.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email.trim())) {
+		throw BadRequestException({ Message: "A valid email is required" });
+	}
+	next();
+};
+
+export const validateResetPassword = (req, res, next) => {
+	const { token, password } = req.body ?? {};
+	if (typeof token !== "string" || token.length < 32) {
+		throw BadRequestException({ Message: "A valid password reset token is required" });
+	}
+	if (typeof password !== "string" || password.length < 8 || password.length > 72) {
+		throw BadRequestException({ Message: "Password must be between 8 and 72 characters" });
+	}
+	next();
+};

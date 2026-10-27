@@ -23,7 +23,7 @@ const userSchema = new Schema(
     },
     password: {
       type: String,
-      required: function () {
+      required: function passwordRequiredForSystemProvider() {
         return this.provider === ProviderEnum.SYSTEM;
       },
       select: false,
@@ -33,6 +33,10 @@ const userSchema = new Schema(
     emailVerificationExpiresAt: { type: Date, select: false },
     emailVerificationResendAt: { type: Date, select: false },
     refreshTokenHash: { type: String, select: false },
+    tokenVersion: { type: Number, default: 0 },
+    passwordResetTokenHash: { type: String, select: false },
+    passwordResetExpiresAt: { type: Date, select: false },
+    passwordResetRequestedAt: { type: Date, select: false },
     DOB: Date,
     age: Number,
     phone: String,
@@ -54,6 +58,8 @@ const userSchema = new Schema(
     confirmEmail: Date,
     profilePic: String,
     coverPic: String,
+    avatarStorageName: { type: String, select: false },
+    coverStorageName: { type: String, select: false },
   },
   {
     timestamps: true,
@@ -65,12 +71,21 @@ const userSchema = new Schema(
         delete ret.emailVerificationExpiresAt;
         delete ret.emailVerificationResendAt;
         delete ret.refreshTokenHash;
+        delete ret.passwordResetTokenHash;
+        delete ret.passwordResetExpiresAt;
+        delete ret.passwordResetRequestedAt;
+        delete ret.googleId;
+        delete ret.tokenVersion;
+        delete ret.avatarStorageName;
+        delete ret.coverStorageName;
         return ret;
       },
     },
     toObject: { virtuals: true },
+    optimisticConcurrency: true,
   },
 );
+
 
 userSchema
   .virtual("username")

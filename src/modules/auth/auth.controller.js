@@ -1,14 +1,16 @@
 import {Router} from "express";
 import successResponse from "../../Utils/Response/success.response.js";
-import { googleLogin, login, logout, refreshTokens, register, resendVerificationEmail, verifyEmail } from "./auth.service.js";
+import { forgotPassword, googleLogin, login, logout, refreshTokens, register, resendVerificationEmail, resetPassword, verifyEmail } from "./auth.service.js";
 import { authenticate } from "../../middleware/auth.middleware.js";
 import {
 	validateEmailVerification,
+	validateForgotPassword,
 	validateGoogleLogin,
 	validateLogin,
 	validateRefreshToken,
 	validateRegister,
 	validateResendVerification,
+	validateResetPassword,
 } from "./auth.validiation.js";
 
 const router = Router();
@@ -29,6 +31,20 @@ router.post("/verify-email", validateEmailVerification, async (req, res) => {
 
 router.post("/resend-verification", validateResendVerification, async (req, res) => {
 	return successResponse(res, 200, "If the account needs verification, a code has been sent", await resendVerificationEmail(req.body.email));
+});
+
+router.post("/forgot-password", validateForgotPassword, async (req, res) => {
+	return successResponse(res, 200, "If the account exists, password reset instructions have been sent", await forgotPassword(req.body.email));
+});
+
+router.post("/reset-password", validateResetPassword, async (req, res) => {
+	return successResponse(res, 200, "Password reset successful", await resetPassword(req.body));
+});
+
+router.post("/revoke-token", validateRefreshToken, async (req, res) => {
+	const result = await refreshTokens(req.body.refreshToken);
+	await logout(result.user._id);
+	return successResponse(res, 200, "Token revoked", { revoked: true });
 });
 
 router.post("/refresh", validateRefreshToken, async (req, res) => {

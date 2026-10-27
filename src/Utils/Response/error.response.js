@@ -68,7 +68,7 @@ export const UnauthorizedException = ({
 };
 
 export const glopalErrorHandler = (err, req, res, next) => {
-    const status = err.status || (err.code === 11000 ? 409 : err.name === "ValidationError" || err.name === "CastError" ? 400 : 500);
+    const status = err.status || (err.code === 11000 ? 409 : err.name === "MulterError" ? (err.code === "LIMIT_FILE_SIZE" ? 413 : 400) : err.name === "ValidationError" || err.name === "CastError" ? 400 : 500);
     const message = err.code === 11000
         ? "A record with this value already exists"
         : err.message || "Internal Server Error";
